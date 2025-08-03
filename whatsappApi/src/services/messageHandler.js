@@ -5,6 +5,9 @@ import appendToSheet from "./googleSheetsService.js";
 // Importa el servicio de openRouter para generar respuestas.
 import openRouterService from "../services/OpenRouterService.js";
 
+// Al inicio del archivo, agregar:
+import googleCalendarService from "../services/googleCalendarService.js";
+
 // Clase principal para manejar la lógica de los mensajes.
 class MessageHandler {
   /**
@@ -22,6 +25,12 @@ class MessageHandler {
   async handleIncomingMessage(message, senderInfo) {
     if (message?.type === "text") {
       const incomingMessage = message.text.body.toLowerCase().trim();
+
+      // Verifica si el usuario quiere ver la agenda de hoy
+      if (incomingMessage === "citas hoy" || incomingMessage === "agenda") {
+        await this.showTodayAppointments(message.from, message.id);
+        return;
+      }
 
       // Reconoce y responde a saludos.
       if (this.isGreeting(incomingMessage)) {
@@ -51,6 +60,7 @@ class MessageHandler {
       // Para cualquier otro mensaje de texto, envía un eco.
       await this.handleTextMessage(message);
     }
+
     // Si el mensaje es una respuesta de botón interactivo.
     else if (
       message?.type === "interactive" &&
@@ -66,12 +76,51 @@ class MessageHandler {
           await this.handleMenuOption(message.from, "consultar", message.id);
           break;
         case "speak_to_agent":
-          // ✅ CORREGIDO: Llamar correctamente al método de ubicación
           await this.handleMenuOption(message.from, "ubicacion", message.id);
           break;
       }
 
       await whatsappService.markAsRead(message.id);
+    }
+  }
+
+  async showTodayAppointments(to, messageId) {
+    try {
+      const today = new Date();
+      const events = await googleCalendarService.getEventsForDate(today);
+
+      if (events.length === 0) {
+        await whatsappService.sendMessage(
+          to,
+          "📅 No hay citas programadas para hoy.",
+          messageId
+        );
+        return;
+      }
+
+      let message = `📅 *Citas de hoy (${today.toLocaleDateString(
+        "es-VE"
+      )}):*\n\n`;
+
+      events.forEach((event, index) => {
+        const startTime = new Date(event.start.dateTime).toLocaleTimeString(
+          "es-VE",
+          {
+            hour: "2-digit",
+            minute: "2-digit",
+          }
+        );
+        message += `${index + 1}. 🕐 ${startTime} - ${event.summary}\n`;
+      });
+
+      await whatsappService.sendMessage(to, message, messageId);
+    } catch (error) {
+      console.error("Error mostrando citas:", error);
+      await whatsappService.sendMessage(
+        to,
+        "❌ Error consultando las citas del día.",
+        messageId
+      );
     }
   }
 
@@ -259,8 +308,42 @@ class MessageHandler {
 
       case "time":
         state.time = message.text.body.trim();
+
+        // 🆕 Verificar disponibilidad
+        const requestedDate = googleCalendarService.parseDateTime(
+          state.date,
+          state.time
+        );
+        if (requestedDate) {
+          const existingEvents = await googleCalendarService.getEventsForDate(
+            requestedDate
+          );
+          const hasConflict = existingEvents.some((event) => {
+            const eventStart = new Date(event.start.dateTime);
+            const diff = Math.abs(
+              eventStart.getTime() - requestedDate.getTime()
+            );
+            return diff < 30 * 60 * 1000; // Menos de 30 minutos de diferencia
+          });
+
+          if (hasConflict) {
+            response = `⚠️ *Horario no disponible*
+
+🕐 Ya hay una cita programada cerca de esa hora.
+
+📅 *Horarios disponibles para ${state.date}:*
+- 9:00 AM
+- 11:00 AM  
+- 2:00 PM
+- 4:00 PM
+
+Por favor elige otro horario:`;
+            break;
+          }
+        }
+
         state.step = "consulta";
-        response = `🕐 Hora registrada: *${state.time}*\n\n💬 ¿Qué tipo de *consulta* necesitas?\n\n_Ejemplo: Consulta general, Revisión, Emergencia, etc._`;
+        response = `🕐 Hora registrada: *${state.time}*\n\n💬 ¿Qué tipo de *consulta* necesitas?`;
         break;
 
       case "consulta":
@@ -397,6 +480,85 @@ class MessageHandler {
    * ✅ ELIMINADO: El método sendContact() duplicado e incorrecto
    * Ahora se usa whatsappService.sendContact() directamente
    */
+  /**
+   * Completa el flujo de agendamiento de citas Y crea evento en Google Calendar
+   */
+  async completeAppointmentFlow(to) {
+    const appointment = this.appointmentState[to];
+    if (!appointment) return;
+
+    try {
+      // 1. Crear evento en Google Calendar
+      console.log("📅 Creando evento en Google Calendar...");
+      const calendarResult = await googleCalendarService.createEvent(
+        appointment
+      );
+
+      // 2. Preparar datos para Google Sheets (mantener funcionalidad existente)
+      const userData = [
+        appointment.name || "",
+        appointment.date || "",
+        appointment.time || "",
+        new Date().toLocaleString("es-VE", { timeZone: "America/Caracas" }),
+        appointment.consulta || "",
+        appointment.monto || "0",
+        appointment.proveedor || "",
+        appointment.rif || "",
+        appointment.pago || "",
+        calendarResult.success ? calendarResult.eventId : "Error", // Agregar ID del evento
+      ];
+
+      // 3. Guardar en Google Sheets
+      appendToSheet(userData);
+
+      // 4. Enviar confirmación con link de calendario (si se creó exitosamente)
+      if (calendarResult.success) {
+        const confirmationMessage = `🎉 *¡CITA CONFIRMADA Y AGENDADA!* 🎉
+
+📅 *Tu cita ha sido guardada en Google Calendar*
+🔗 *Link directo:* ${calendarResult.eventLink}
+
+📋 *RESUMEN COMPLETO:*
+👤 *Nombre:* ${appointment.name}
+📅 *Fecha:* ${appointment.date}
+🕐 *Hora:* ${appointment.time}
+💬 *Consulta:* ${appointment.consulta}
+💰 *Monto:* $${appointment.monto}
+🏥 *Proveedor:* ${appointment.proveedor}
+📋 *RIF:* ${appointment.rif}
+💳 *Método de pago:* ${appointment.pago}
+
+✅ *La cita está sincronizada con Google Calendar*
+📧 *Recibirás recordatorios automáticos*
+
+¡Gracias por confiar en nosotros!`;
+
+        await whatsappService.sendMessage(to, confirmationMessage);
+      }
+
+      console.log(`✅ Cita completada para ${to}:`, userData);
+    } catch (error) {
+      console.error("❌ Error en completeAppointmentFlow:", error.message);
+
+      // Mensaje de error amigable
+      const errorMessage = `⚠️ *Cita registrada* pero hubo un problema con Google Calendar.
+
+📋 *Datos guardados exitosamente*
+❌ *Calendar:* No se pudo sincronizar automáticamente
+
+📞 *Por favor contacta a soporte para confirmar tu cita*
+
+*Datos de tu cita:*
+👤 ${appointment.name}
+📅 ${appointment.date} - ${appointment.time}
+💬 ${appointment.consulta}`;
+
+      await whatsappService.sendMessage(to, errorMessage);
+    } finally {
+      // Siempre limpiar el estado
+      delete this.appointmentState[to];
+    }
+  }
 }
 
 // Exporta una única instancia del MessageHandler.
