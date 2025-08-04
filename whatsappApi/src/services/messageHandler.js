@@ -3,7 +3,7 @@ import whatsappService from "./whatsappService.js";
 // Importa la función para añadir datos a Google Sheets.
 import appendToSheet from "./googleSheetsService.js";
 // Importa el servicio de openRouter para generar respuestas.
-import openRouterService from "./openRouterService.js";
+import openRouterService from "../services/openRouterService.js";
 import googleCalendarService from "../services/googleCalendarService.js";
 
 // Clase principal para manejar la lógica de los mensajes.
