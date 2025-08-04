@@ -3,14 +3,26 @@
   "version": "1.0.0",
   "main": "src/app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node src/app.js"
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "echo \"No tests specified\" && exit 0"
   },
   "type": "module",
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "medical",
+    "appointment",
+    "node",
+    "express"
+  ],
+  "author": "ZoroathaProject",
   "license": "ISC",
-  "description": "",
+  "description": "WhatsApp medical appointment bot with AI assistant",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
   "dependencies": {
     "axios": "^1.7.7",
     "dotenv": "^16.6.1",
