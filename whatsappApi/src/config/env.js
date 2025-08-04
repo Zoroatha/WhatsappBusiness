@@ -1,19 +1,35 @@
-// config/env.js
 import dotenv from "dotenv";
+
 dotenv.config();
 
-export default {
-  // WhatsApp API
-  WEBHOOK_VERIFY_TOKEN: process.env.WEBHOOK_VERIFY_TOKEN,
-  API_TOKEN: process.env.API_TOKEN,
+const config = {
   PORT: process.env.PORT || 3000,
-  BUSINESS_PHONE: process.env.BUSINESS_PHONE,
-  API_VERSION: process.env.API_VERSION,
-  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
-  BASE_URL: process.env.BASE_URL,
-
-  // Google API (agregar estas líneas)
-  GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-  GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  GOOGLE_CALENDAR_ID: process.env.GOOGLE_CALENDAR_ID,
+  WEBHOOK_VERIFY_TOKEN:
+    process.env.WEBHOOK_VERIFY_TOKEN || process.env.VERIFY_TOKEN,
+  ACCESS_TOKEN: process.env.ACCESS_TOKEN,
+  PHONE_NUMBER_ID: process.env.PHONE_NUMBER_ID,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  // Agregar otras variables que necesites
 };
+
+// Verificar variables críticas
+const requiredVars = ["WEBHOOK_VERIFY_TOKEN", "ACCESS_TOKEN"];
+for (const varName of requiredVars) {
+  if (!config[varName]) {
+    console.error(
+      `❌ ERROR: Missing required environment variable: ${varName}`
+    );
+  } else {
+    console.log(`✅ ${varName}: configured`);
+  }
+}
+
+console.log("📊 Environment loaded:", {
+  PORT: config.PORT,
+  hasWebhookToken: !!config.WEBHOOK_VERIFY_TOKEN,
+  hasAccessToken: !!config.ACCESS_TOKEN,
+  hasPhoneNumberId: !!config.PHONE_NUMBER_ID,
+  hasOpenAIKey: !!config.OPENAI_API_KEY,
+});
+
+export default config;
