@@ -3,7 +3,7 @@ import config from "./config/env.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 
 const app = express();
-const PORT = config.PORT || 3000;
+
 app.use(express.json());
 
 app.use("/", webhookRoutes);
@@ -28,6 +28,7 @@ setInterval(() => {
 console.log("Env config:", config);
 console.log("Webhook route initialized");
 
+const PORT = process.env.PORT || config.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is listening on port:  ${PORT}`);
+  console.log(`Server is listening on port: ${PORT}`);
 });
