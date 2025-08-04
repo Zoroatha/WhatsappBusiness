@@ -4,7 +4,6 @@ import whatsappService from "./whatsappService.js";
 import appendToSheet from "./googleSheetsService.js";
 // Importa el servicio de openRouter para generar respuestas.
 import openRouterService from "../services/OpenRouterService.js";
-
 // Al inicio del archivo, agregar:
 import googleCalendarService from "../services/googleCalendarService.js";
 
@@ -23,69 +22,96 @@ class MessageHandler {
    * Maneja todos los mensajes entrantes, dirigiendo el flujo de la conversación.
    */
   async handleIncomingMessage(message, senderInfo) {
-    if (message?.type === "text") {
-      const incomingMessage = message.text.body.toLowerCase().trim();
+    try {
+      console.log("📨 Processing message in MessageHandler:", {
+        type: message?.type,
+        from: message?.from,
+        hasAppointmentState: !!this.appointmentState[message?.from],
+        hasAssistantState: !!this.assistantState[message?.from],
+      });
 
-      // Verifica si el usuario quiere ver la agenda de hoy
-      if (incomingMessage === "citas hoy" || incomingMessage === "agenda") {
-        await this.showTodayAppointments(message.from, message.id);
-        return;
+      if (message?.type === "text") {
+        const incomingMessage = message.text.body.toLowerCase().trim();
+
+        // Verifica si el usuario quiere ver la agenda de hoy
+        if (incomingMessage === "citas hoy" || incomingMessage === "agenda") {
+          await this.showTodayAppointments(message.from, message.id);
+          return;
+        }
+
+        // Reconoce y responde a saludos.
+        if (this.isGreeting(incomingMessage)) {
+          await this.sendWelcomeMessage(message.from, message.id, senderInfo);
+          await this.sendWelcomeMenu(message.from, message.id);
+          return;
+        }
+
+        // Responde al comando "send media".
+        if (incomingMessage === "send media") {
+          await this.sendMedia(message.from, message.id);
+          return;
+        }
+
+        // ✅ Verificar estado del asistente ANTES que otros flujos
+        if (this.assistantState[message.from]) {
+          await this.handleAssistantFlow(message.from, message, senderInfo);
+          return;
+        }
+
+        // Si el usuario está en el flujo de agendamiento de citas
+        if (this.appointmentState[message.from]) {
+          await this.handleAppointmentFlow(message.from, message);
+          return;
+        }
+
+        // Para cualquier otro mensaje de texto, envía un eco.
+        await this.handleTextMessage(message);
       }
 
-      // Reconoce y responde a saludos.
-      if (this.isGreeting(incomingMessage)) {
-        await this.sendWelcomeMessage(message.from, message.id, senderInfo);
-        await this.sendWelcomeMenu(message.from, message.id);
-        return;
+      // Si el mensaje es una respuesta de botón interactivo.
+      else if (
+        message?.type === "interactive" &&
+        message.interactive?.type === "button_reply"
+      ) {
+        const buttonId = message.interactive.button_reply.id;
+
+        switch (buttonId) {
+          case "schedule":
+            await this.handleMenuOption(message.from, "agendar", message.id);
+            break;
+          case "services":
+            await this.handleMenuOption(message.from, "consultar", message.id);
+            break;
+          case "speak_to_agent":
+            await this.handleMenuOption(message.from, "ubicacion", message.id);
+            break;
+        }
+
+        await whatsappService.markAsRead(message.id);
       }
+    } catch (error) {
+      console.error("❌ Error in handleIncomingMessage:", error);
+      console.error("📋 Stack trace:", error.stack);
 
-      // Responde al comando "send media".
-      if (incomingMessage === "send media") {
-        await this.sendMedia(message.from, message.id);
-        return;
+      // Enviar mensaje de error al usuario
+      try {
+        if (message?.from) {
+          await whatsappService.sendMessage(
+            message.from,
+            "❌ Lo siento, ocurrió un error procesando tu mensaje. Por favor intenta de nuevo.",
+            message?.id
+          );
+        }
+      } catch (sendError) {
+        console.error("❌ Failed to send error message:", sendError);
       }
-
-      // ✅ Verificar estado del asistente ANTES que otros flujos
-      if (this.assistantState[message.from]) {
-        await this.handleAssistantFlow(message.from, message, senderInfo);
-        return;
-      }
-
-      // Si el usuario está en el flujo de agendamiento de citas
-      if (this.appointmentState[message.from]) {
-        await this.handleAppointmentFlow(message.from, message);
-        return;
-      }
-
-      // Para cualquier otro mensaje de texto, envía un eco.
-      await this.handleTextMessage(message);
-    }
-
-    // Si el mensaje es una respuesta de botón interactivo.
-    else if (
-      message?.type === "interactive" &&
-      message.interactive?.type === "button_reply"
-    ) {
-      const buttonId = message.interactive.button_reply.id;
-
-      switch (buttonId) {
-        case "schedule":
-          await this.handleMenuOption(message.from, "agendar", message.id);
-          break;
-        case "services":
-          await this.handleMenuOption(message.from, "consultar", message.id);
-          break;
-        case "speak_to_agent":
-          await this.handleMenuOption(message.from, "ubicacion", message.id);
-          break;
-      }
-
-      await whatsappService.markAsRead(message.id);
     }
   }
 
   async showTodayAppointments(to, messageId) {
     try {
+      console.log("📅 Showing today appointments for:", to);
+
       const today = new Date();
       const events = await googleCalendarService.getEventsForDate(today);
 
@@ -115,7 +141,7 @@ class MessageHandler {
 
       await whatsappService.sendMessage(to, message, messageId);
     } catch (error) {
-      console.error("Error mostrando citas:", error);
+      console.error("❌ Error mostrando citas:", error);
       await whatsappService.sendMessage(
         to,
         "❌ Error consultando las citas del día.",
@@ -136,82 +162,95 @@ class MessageHandler {
    * Obtiene el nombre del remitente o usa un valor por defecto.
    */
   getSenderName(senderInfo) {
-    return senderInfo?.profile?.name || senderInfo.wa_id || "Client";
+    return senderInfo?.profile?.name || senderInfo?.wa_id || "Client";
   }
 
   /**
    * Envía un "eco" de vuelta al remitente para mensajes de texto no manejados.
    */
   async handleTextMessage(message) {
-    const response = `Echo: ${message.text.body}`;
-    await whatsappService.sendMessage(message.from, response, message.id);
-    await whatsappService.markAsRead(message.id);
+    try {
+      const response = `Echo: ${message.text.body}`;
+      await whatsappService.sendMessage(message.from, response, message.id);
+      await whatsappService.markAsRead(message.id);
+    } catch (error) {
+      console.error("❌ Error in handleTextMessage:", error);
+    }
   }
 
   /**
    * ✅ CORREGIDO: Maneja la selección de opciones del menú principal
    */
   async handleMenuOption(to, option, messageId = null) {
-    let response;
+    try {
+      console.log(`🎯 Handling menu option: ${option} for ${to}`);
 
-    switch (option) {
-      case "agendar":
-        this.appointmentState[to] = { step: "name" };
-        response =
-          "📅 *Proceso de Agendamiento de Cita*\n\nPara agendar tu cita, por favor proporciona tu *nombre completo*:";
-        await whatsappService.sendMessage(to, response, messageId);
-        break;
+      let response;
 
-      case "consultar":
-        // ✅ Activar el asistente IA para consultas
-        this.assistantState[to] = { step: "question" };
-        response =
-          "🤖 *Asistente Virtual Activado*\n\n💬 Hola! Soy tu asistente inteligente. Puedes hacerme cualquier consulta sobre:\n\n• Información médica general\n• Medicamentos y tratamientos\n• Servicios de la clínica\n• Cualquier duda de salud\n\n¿En qué puedo ayudarte hoy?";
-        await whatsappService.sendMessage(to, response, messageId);
-        break;
-
-      case "ubicacion":
-        // ✅ CORREGIDO: Enviar ubicación usando el método del servicio
-        try {
+      switch (option) {
+        case "agendar":
+          this.appointmentState[to] = { step: "name" };
           response =
-            "📍 *Nuestra Ubicación:*\n\nTe comparto nuestra ubicación exacta:";
+            "📅 *Proceso de Agendamiento de Cita*\n\nPara agendar tu cita, por favor proporciona tu *nombre completo*:";
           await whatsappService.sendMessage(to, response, messageId);
+          break;
 
-          // Enviar la ubicación real
-          await whatsappService.sendLocation(to);
-
-          // Mensaje adicional con información extra
-          const extraInfo =
-            "🕐 *Horarios de Atención:*\nLunes a Viernes: 8:00 AM - 6:00 PM\nSábados: 8:00 AM - 2:00 PM\n\n📞 Para emergencias: +57 3002726932";
-          await whatsappService.sendMessage(to, extraInfo, null);
-        } catch (error) {
-          console.error("❌ Error enviando ubicación:", error.message);
-          const fallbackResponse =
-            "📍 Nuestra ubicación:\n\nAv. Principal, Maracaibo, Zulia, Venezuela\n\n📞 Teléfono: +57 3002726932\n📧 Email: cesarthdiz@gmail.com";
-          await whatsappService.sendMessage(to, fallbackResponse, messageId);
-        }
-        break;
-
-      case "emergencia":
-        try {
+        case "consultar":
+          // ✅ Activar el asistente IA para consultas
+          this.assistantState[to] = { step: "question" };
           response =
-            "🚑 *Contacto de Emergencia*\n\nTe comparto nuestro contacto de emergencia:";
+            "🤖 *Asistente Virtual Activado*\n\n💬 Hola! Soy tu asistente inteligente. Puedes hacerme cualquier consulta sobre:\n\n• Información médica general\n• Medicamentos y tratamientos\n• Servicios de la clínica\n• Cualquier duda de salud\n\n¿En qué puedo ayudarte hoy?";
           await whatsappService.sendMessage(to, response, messageId);
+          break;
 
-          // Enviar el contacto
-          await whatsappService.sendContact(to);
-        } catch (error) {
-          console.error("❌ Error enviando contacto:", error.message);
-          const fallbackResponse =
-            "🚑 En caso de emergencia:\n\n📞 Llama al: +57 3002726932\n📧 Email: cesarthdiz@gmail.com";
-          await whatsappService.sendMessage(to, fallbackResponse, messageId);
-        }
-        break;
+        case "ubicacion":
+          // ✅ CORREGIDO: Enviar ubicación usando el método del servicio
+          try {
+            response =
+              "📍 *Nuestra Ubicación:*\n\nTe comparto nuestra ubicación exacta:";
+            await whatsappService.sendMessage(to, response, messageId);
 
-      default:
-        response =
-          "❌ Lo siento, no entendí tu selección. Por favor, elige una de las opciones del menú.";
-        await whatsappService.sendMessage(to, response, messageId);
+            // Enviar la ubicación real
+            await whatsappService.sendLocation(to);
+
+            // Mensaje adicional con información extra
+            const extraInfo =
+              "🕐 *Horarios de Atención:*\nLunes a Viernes: 8:00 AM - 6:00 PM\nSábados: 8:00 AM - 2:00 PM\n\n📞 Para emergencias: +57 3002726932";
+            await whatsappService.sendMessage(to, extraInfo, null);
+          } catch (error) {
+            console.error("❌ Error enviando ubicación:", error.message);
+            const fallbackResponse =
+              "📍 Nuestra ubicación:\n\nAv. Principal, Maracaibo, Zulia, Venezuela\n\n📞 Teléfono: +57 3002726932\n📧 Email: cesarthdiz@gmail.com";
+            await whatsappService.sendMessage(to, fallbackResponse, messageId);
+          }
+          break;
+
+        case "emergencia":
+          try {
+            response =
+              "🚑 *Contacto de Emergencia*\n\nTe comparto nuestro contacto de emergencia:";
+            await whatsappService.sendMessage(to, response, messageId);
+
+            // Enviar el contacto
+            await whatsappService.sendContact(to);
+          } catch (error) {
+            console.error("❌ Error enviando contacto:", error.message);
+            const fallbackResponse =
+              "🚑 En caso de emergencia:\n\n📞 Llama al: +57 3002726932\n📧 Email: cesarthdiz@gmail.com";
+            await whatsappService.sendMessage(to, fallbackResponse, messageId);
+          }
+          break;
+
+        default:
+          response =
+            "❌ Lo siento, no entendí tu selección. Por favor, elige una de las opciones del menú.";
+          await whatsappService.sendMessage(to, response, messageId);
+      }
+    } catch (error) {
+      console.error("❌ Error in handleMenuOption:", error);
+      const fallbackResponse =
+        "❌ Error procesando tu selección. Intenta de nuevo.";
+      await whatsappService.sendMessage(to, fallbackResponse, messageId);
     }
   }
 
@@ -219,27 +258,38 @@ class MessageHandler {
    * Envía un mensaje de bienvenida personalizado.
    */
   async sendWelcomeMessage(to, messageId, senderInfo) {
-    const name = this.getSenderName(senderInfo);
-    const welcomeMessage = `👋 Hola *${name}*, ¡bienvenido/a a nuestro servicio de WhatsApp! ¿En qué puedo ayudarte hoy?`;
-    await whatsappService.sendMessage(to, welcomeMessage, messageId);
-    await whatsappService.markAsRead(messageId);
+    try {
+      const name = this.getSenderName(senderInfo);
+      const welcomeMessage = `👋 Hola *${name}*, ¡bienvenido/a a nuestro servicio de WhatsApp! ¿En qué puedo ayudarte hoy?`;
+      await whatsappService.sendMessage(to, welcomeMessage, messageId);
+      await whatsappService.markAsRead(messageId);
+    } catch (error) {
+      console.error("❌ Error in sendWelcomeMessage:", error);
+    }
   }
 
   /**
    * Envía el menú principal con botones interactivos.
    */
   async sendWelcomeMenu(to, messageId) {
-    const buttons = [
-      { type: "reply", reply: { id: "schedule", title: "📅 Agendar Cita" } },
-      { type: "reply", reply: { id: "services", title: "💬 Consultar" } },
-      { type: "reply", reply: { id: "speak_to_agent", title: "📍 Ubicación" } },
-    ];
-    await whatsappService.sendInteractiveButtons(
-      to,
-      "Selecciona una opción:",
-      buttons,
-      messageId
-    );
+    try {
+      const buttons = [
+        { type: "reply", reply: { id: "schedule", title: "📅 Agendar Cita" } },
+        { type: "reply", reply: { id: "services", title: "💬 Consultar" } },
+        {
+          type: "reply",
+          reply: { id: "speak_to_agent", title: "📍 Ubicación" },
+        },
+      ];
+      await whatsappService.sendInteractiveButtons(
+        to,
+        "Selecciona una opción:",
+        buttons,
+        messageId
+      );
+    } catch (error) {
+      console.error("❌ Error in sendWelcomeMenu:", error);
+    }
   }
 
   /**
@@ -253,7 +303,7 @@ class MessageHandler {
       await whatsappService.sendMediaMessage(to, type, mediaUrl, caption);
       await whatsappService.markAsRead(messageId);
     } catch (error) {
-      console.error("Error sending media:", error.message);
+      console.error("❌ Error sending media:", error.message);
       await whatsappService.sendMessage(
         to,
         "❌ Lo siento, hubo un error al enviar el medio.",
@@ -263,71 +313,57 @@ class MessageHandler {
   }
 
   /**
-   * Completa el flujo de agendamiento de citas.
-   */
-  completeAppointmentFlow(to) {
-    const appointment = this.appointmentState[to];
-    if (!appointment) return;
-
-    const userData = [
-      appointment.name || "",
-      appointment.date || "",
-      appointment.time || "",
-      new Date().toLocaleString("es-VE", { timeZone: "America/Caracas" }),
-      appointment.consulta || "",
-      appointment.monto || "0",
-      appointment.proveedor || "",
-      appointment.rif || "",
-      appointment.pago || "",
-    ];
-
-    appendToSheet(userData);
-    console.log(`✅ Cita completada para ${to}:`, userData);
-    delete this.appointmentState[to];
-  }
-
-  /**
    * Maneja el progreso del flujo de agendamiento de citas.
    */
   async handleAppointmentFlow(to, message) {
-    const state = this.appointmentState[to];
-    let response;
+    try {
+      console.log(
+        `📋 Handling appointment flow for ${to}, step: ${this.appointmentState[to]?.step}`
+      );
 
-    switch (state.step) {
-      case "name":
-        state.name = message.text.body.trim();
-        state.step = "date";
-        response = `✅ Gracias *${state.name}*.\n\n📅 Por favor, proporciona tu *fecha preferida* (formato: DD/MM/AAAA):\n\n_Ejemplo: 15/12/2024_`;
-        break;
+      const state = this.appointmentState[to];
+      if (!state) {
+        console.error("❌ No appointment state found for:", to);
+        return;
+      }
 
-      case "date":
-        state.date = message.text.body.trim();
-        state.step = "time";
-        response = `📅 Fecha registrada: *${state.date}*\n\n🕐 ¿A qué *hora* prefieres tu cita?\n\n_Ejemplo: 10:30 AM o 14:30_`;
-        break;
+      let response;
 
-      case "time":
-        state.time = message.text.body.trim();
+      switch (state.step) {
+        case "name":
+          state.name = message.text.body.trim();
+          state.step = "date";
+          response = `✅ Gracias *${state.name}*.\n\n📅 Por favor, proporciona tu *fecha preferida* (formato: DD/MM/AAAA):\n\n_Ejemplo: 15/12/2024_`;
+          break;
 
-        // 🆕 Verificar disponibilidad
-        const requestedDate = googleCalendarService.parseDateTime(
-          state.date,
-          state.time
-        );
-        if (requestedDate) {
-          const existingEvents = await googleCalendarService.getEventsForDate(
-            requestedDate
-          );
-          const hasConflict = existingEvents.some((event) => {
-            const eventStart = new Date(event.start.dateTime);
-            const diff = Math.abs(
-              eventStart.getTime() - requestedDate.getTime()
+        case "date":
+          state.date = message.text.body.trim();
+          state.step = "time";
+          response = `📅 Fecha registrada: *${state.date}*\n\n🕐 ¿A qué *hora* prefieres tu cita?\n\n_Ejemplo: 10:30 AM o 14:30_`;
+          break;
+
+        case "time":
+          state.time = message.text.body.trim();
+
+          // 🆕 Verificar disponibilidad si googleCalendarService está disponible
+          try {
+            const requestedDate = googleCalendarService.parseDateTime(
+              state.date,
+              state.time
             );
-            return diff < 30 * 60 * 1000; // Menos de 30 minutos de diferencia
-          });
+            if (requestedDate) {
+              const existingEvents =
+                await googleCalendarService.getEventsForDate(requestedDate);
+              const hasConflict = existingEvents.some((event) => {
+                const eventStart = new Date(event.start.dateTime);
+                const diff = Math.abs(
+                  eventStart.getTime() - requestedDate.getTime()
+                );
+                return diff < 30 * 60 * 1000; // Menos de 30 minutos de diferencia
+              });
 
-          if (hasConflict) {
-            response = `⚠️ *Horario no disponible*
+              if (hasConflict) {
+                response = `⚠️ *Horario no disponible*
 
 🕐 Ya hay una cita programada cerca de esa hora.
 
@@ -338,71 +374,88 @@ class MessageHandler {
 - 4:00 PM
 
 Por favor elige otro horario:`;
+                break;
+              }
+            }
+          } catch (calendarError) {
+            console.warn(
+              "⚠️ Calendar check failed, continuing:",
+              calendarError.message
+            );
+          }
+
+          state.step = "consulta";
+          response = `🕐 Hora registrada: *${state.time}*\n\n💬 ¿Qué tipo de *consulta* necesitas?`;
+          break;
+
+        case "consulta":
+          state.consulta = message.text.body.trim();
+          state.step = "monto";
+          response = `💬 Tipo de consulta: *${state.consulta}*\n\n💰 ¿Cuál es el *monto* de la consulta?\n\n_Ejemplo: 50, 100, 150 (solo números)_`;
+          break;
+
+        case "monto":
+          const montoInput = message.text.body.trim();
+          if (isNaN(montoInput) || montoInput === "") {
+            response = `❌ Por favor ingresa un *monto válido* (solo números).\n\n💰 Ejemplo: 50, 100, 150`;
             break;
           }
-        }
-
-        state.step = "consulta";
-        response = `🕐 Hora registrada: *${state.time}*\n\n💬 ¿Qué tipo de *consulta* necesitas?`;
-        break;
-
-      case "consulta":
-        state.consulta = message.text.body.trim();
-        state.step = "monto";
-        response = `💬 Tipo de consulta: *${state.consulta}*\n\n💰 ¿Cuál es el *monto* de la consulta?\n\n_Ejemplo: 50, 100, 150 (solo números)_`;
-        break;
-
-      case "monto":
-        const montoInput = message.text.body.trim();
-        if (isNaN(montoInput) || montoInput === "") {
-          response = `❌ Por favor ingresa un *monto válido* (solo números).\n\n💰 Ejemplo: 50, 100, 150`;
+          state.monto = montoInput;
+          state.step = "proveedor";
+          response = `💰 Monto registrado: *$${state.monto}*\n\n🏥 ¿Cuál es el nombre del *proveedor* o centro médico?\n\n_Ejemplo: Clínica San Rafael, Dr. García, etc._`;
           break;
-        }
-        state.monto = montoInput;
-        state.step = "proveedor";
-        response = `💰 Monto registrado: *$${state.monto}*\n\n🏥 ¿Cuál es el nombre del *proveedor* o centro médico?\n\n_Ejemplo: Clínica San Rafael, Dr. García, etc._`;
-        break;
 
-      case "proveedor":
-        state.proveedor = message.text.body.trim();
-        state.step = "rif";
-        response = `🏥 Proveedor registrado: *${state.proveedor}*\n\n📋 Por favor proporciona el *RIF* del proveedor:\n\n_Ejemplo: J-12345678-9, V-98765432-1_`;
-        break;
+        case "proveedor":
+          state.proveedor = message.text.body.trim();
+          state.step = "rif";
+          response = `🏥 Proveedor registrado: *${state.proveedor}*\n\n📋 Por favor proporciona el *RIF* del proveedor:\n\n_Ejemplo: J-12345678-9, V-98765432-1_`;
+          break;
 
-      case "rif":
-        state.rif = message.text.body.trim().toUpperCase();
-        state.step = "pago";
-        response = `📋 RIF registrado: *${state.rif}*\n\n💳 ¿Cuál será el *método de pago*?\n\n_Opciones: Efectivo, Tarjeta, Transferencia, Pago móvil, etc._`;
-        break;
+        case "rif":
+          state.rif = message.text.body.trim().toUpperCase();
+          state.step = "pago";
+          response = `📋 RIF registrado: *${state.rif}*\n\n💳 ¿Cuál será el *método de pago*?\n\n_Opciones: Efectivo, Tarjeta, Transferencia, Pago móvil, etc._`;
+          break;
 
-      case "pago":
-        state.pago = message.text.body.trim();
-        response = `✅ *¡CITA CONFIRMADA!* ✅\n\n📋 *RESUMEN DE TU CITA:*\n\n👤 *Nombre:* ${state.name}\n📅 *Fecha:* ${state.date}\n🕐 *Hora:* ${state.time}\n💬 *Consulta:* ${state.consulta}\n💰 *Monto:* $${state.monto}\n🏥 *Proveedor:* ${state.proveedor}\n📋 *RIF:* ${state.rif}\n💳 *Método de pago:* ${state.pago}\n\n🎉 ¡Gracias por confiar en nosotros!\n\n📧 Recibirás una confirmación por email próximamente.`;
-        this.completeAppointmentFlow(to);
-        break;
+        case "pago":
+          state.pago = message.text.body.trim();
+          response = `✅ *¡CITA CONFIRMADA!* ✅\n\n📋 *RESUMEN DE TU CITA:*\n\n👤 *Nombre:* ${state.name}\n📅 *Fecha:* ${state.date}\n🕐 *Hora:* ${state.time}\n💬 *Consulta:* ${state.consulta}\n💰 *Monto:* $${state.monto}\n🏥 *Proveedor:* ${state.proveedor}\n📋 *RIF:* ${state.rif}\n💳 *Método de pago:* ${state.pago}\n\n🎉 ¡Gracias por confiar en nosotros!\n\n📧 Recibirás una confirmación por email próximamente.`;
+          await this.completeAppointmentFlow(to);
+          break;
 
-      default:
-        response = `❌ Hubo un error en el proceso. Vamos a reiniciar.\n\n📅 Por favor, proporciona tu *nombre completo* para agendar tu cita:`;
-        state.step = "name";
-        break;
+        default:
+          response = `❌ Hubo un error en el proceso. Vamos a reiniciar.\n\n📅 Por favor, proporciona tu *nombre completo* para agendar tu cita:`;
+          state.step = "name";
+          break;
+      }
+
+      if (state && state.step !== "completed") {
+        this.appointmentState[to] = state;
+      }
+
+      await whatsappService.sendMessage(to, response, message.id);
+      await whatsappService.markAsRead(message.id);
+    } catch (error) {
+      console.error("❌ Error in handleAppointmentFlow:", error);
+
+      // Reset appointment state and send error message
+      delete this.appointmentState[to];
+      const errorResponse =
+        "❌ Error en el proceso de cita. Por favor inicia de nuevo escribiendo 'hola'.";
+      await whatsappService.sendMessage(to, errorResponse, message.id);
     }
-
-    if (state.step !== "completed") {
-      this.appointmentState[to] = state;
-    }
-
-    await whatsappService.sendMessage(to, response, message.id);
-    await whatsappService.markAsRead(message.id);
   }
 
   /**
    * ✅ MÉTODO CORREGIDO: Maneja el flujo del asistente IA
    */
   async handleAssistantFlow(to, message, senderInfo) {
-    const state = this.assistantState[to];
+    try {
+      console.log(`🤖 Handling assistant flow for ${to}`);
 
-    if (state && state.step === "question") {
-      try {
+      const state = this.assistantState[to];
+
+      if (state && state.step === "question") {
         console.log(`🤖 Consultando OpenRouter para: ${message.text.body}`);
 
         // Usar el servicio de DeepSeek
@@ -422,77 +475,68 @@ Por favor elige otro horario:`;
 
         // Enviar menú de opciones después de la respuesta
         setTimeout(async () => {
-          const menuMessage = "¿Hay algo más en lo que pueda ayudarte?";
-          const buttons = [
-            {
-              type: "reply",
-              reply: { id: "schedule", title: "📅 Agendar Cita" },
-            },
-            {
-              type: "reply",
-              reply: { id: "services", title: "💬 Otra Consulta" },
-            },
-            {
-              type: "reply",
-              reply: { id: "speak_to_agent", title: "📍 Ubicación" },
-            },
-          ];
-          await whatsappService.sendInteractiveButtons(
-            to,
-            menuMessage,
-            buttons
-          );
+          try {
+            const menuMessage = "¿Hay algo más en lo que pueda ayudarte?";
+            const buttons = [
+              {
+                type: "reply",
+                reply: { id: "schedule", title: "📅 Agendar Cita" },
+              },
+              {
+                type: "reply",
+                reply: { id: "services", title: "💬 Otra Consulta" },
+              },
+              {
+                type: "reply",
+                reply: { id: "speak_to_agent", title: "📍 Ubicación" },
+              },
+            ];
+            await whatsappService.sendInteractiveButtons(
+              to,
+              menuMessage,
+              buttons
+            );
+          } catch (menuError) {
+            console.error("❌ Error sending menu after assistant:", menuError);
+          }
         }, 1000); // Esperar 1 segundo antes de mostrar el menú
-      } catch (error) {
-        console.error("❌ Error en handleAssistantFlow:", error.message);
-
-        // Respuesta de fallback
-        const fallbackResponse =
-          "❌ Lo siento, no pude procesar tu consulta en este momento. Por favor intenta de nuevo más tarde.";
-        await whatsappService.sendMessage(to, fallbackResponse, message.id);
-
-        // Limpiar estado y mostrar menú
-        delete this.assistantState[to];
-        await this.sendWelcomeMenu(to, null);
       }
+    } catch (error) {
+      console.error("❌ Error en handleAssistantFlow:", error.message);
+
+      // Respuesta de fallback
+      const fallbackResponse =
+        "❌ Lo siento, no pude procesar tu consulta en este momento. Por favor intenta de nuevo más tarde.";
+      await whatsappService.sendMessage(to, fallbackResponse, message.id);
+
+      // Limpiar estado y mostrar menú
+      delete this.assistantState[to];
+      await this.sendWelcomeMenu(to, null);
     }
   }
 
-  /**
-   * Permite cancelar el flujo de cita en cualquier momento
-   */
-  cancelAppointmentFlow(to) {
-    if (this.appointmentState[to]) {
-      delete this.appointmentState[to];
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Obtiene el estado actual del flujo de cita para un usuario
-   */
-  getAppointmentState(to) {
-    return this.appointmentState[to] || null;
-  }
-
-  /**
-   * ✅ ELIMINADO: El método sendContact() duplicado e incorrecto
-   * Ahora se usa whatsappService.sendContact() directamente
-   */
   /**
    * Completa el flujo de agendamiento de citas Y crea evento en Google Calendar
    */
   async completeAppointmentFlow(to) {
     const appointment = this.appointmentState[to];
-    if (!appointment) return;
+    if (!appointment) {
+      console.error("❌ No appointment data found for:", to);
+      return;
+    }
 
     try {
-      // 1. Crear evento en Google Calendar
-      console.log("📅 Creando evento en Google Calendar...");
-      const calendarResult = await googleCalendarService.createEvent(
-        appointment
-      );
+      console.log(`✅ Completing appointment for ${to}:`, appointment);
+
+      let calendarResult = { success: false, eventId: null, eventLink: null };
+
+      // 1. Intentar crear evento en Google Calendar
+      try {
+        console.log("📅 Creando evento en Google Calendar...");
+        calendarResult = await googleCalendarService.createEvent(appointment);
+      } catch (calendarError) {
+        console.warn("⚠️ Calendar creation failed:", calendarError.message);
+      }
 
       // 2. Preparar datos para Google Sheets (mantener funcionalidad existente)
       const userData = [
@@ -509,7 +553,11 @@ Por favor elige otro horario:`;
       ];
 
       // 3. Guardar en Google Sheets
-      appendToSheet(userData);
+      try {
+        await appendToSheet(userData);
+      } catch (sheetsError) {
+        console.error("❌ Error saving to Google Sheets:", sheetsError.message);
+      }
 
       // 4. Enviar confirmación con link de calendario (si se creó exitosamente)
       if (calendarResult.success) {
@@ -534,19 +582,36 @@ Por favor elige otro horario:`;
 ¡Gracias por confiar en nosotros!`;
 
         await whatsappService.sendMessage(to, confirmationMessage);
+      } else {
+        // Mensaje si no se pudo crear en Calendar pero se guardó en Sheets
+        const basicConfirmation = `✅ *¡CITA CONFIRMADA!* ✅
+
+📋 *RESUMEN DE TU CITA:*
+👤 *Nombre:* ${appointment.name}
+📅 *Fecha:* ${appointment.date}
+🕐 *Hora:* ${appointment.time}
+💬 *Consulta:* ${appointment.consulta}
+💰 *Monto:* $${appointment.monto}
+🏥 *Proveedor:* ${appointment.proveedor}
+📋 *RIF:* ${appointment.rif}
+💳 *Método de pago:* ${appointment.pago}
+
+🎉 ¡Gracias por confiar en nosotros!
+📧 Recibirás una confirmación por email próximamente.`;
+
+        await whatsappService.sendMessage(to, basicConfirmation);
       }
 
-      console.log(`✅ Cita completada para ${to}:`, userData);
+      console.log(`✅ Cita completada para ${to}`);
     } catch (error) {
       console.error("❌ Error en completeAppointmentFlow:", error.message);
 
       // Mensaje de error amigable
-      const errorMessage = `⚠️ *Cita registrada* pero hubo un problema con Google Calendar.
+      const errorMessage = `⚠️ *Hubo un problema guardando tu cita*
 
-📋 *Datos guardados exitosamente*
-❌ *Calendar:* No se pudo sincronizar automáticamente
-
-📞 *Por favor contacta a soporte para confirmar tu cita*
+📞 *Por favor contacta a soporte*
+📧 Email: cesarthdiz@gmail.com
+📱 WhatsApp: +57 3002726932
 
 *Datos de tu cita:*
 👤 ${appointment.name}
@@ -558,6 +623,24 @@ Por favor elige otro horario:`;
       // Siempre limpiar el estado
       delete this.appointmentState[to];
     }
+  }
+
+  /**
+   * Permite cancelar el flujo de cita en cualquier momento
+   */
+  cancelAppointmentFlow(to) {
+    if (this.appointmentState[to]) {
+      delete this.appointmentState[to];
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Obtiene el estado actual del flujo de cita para un usuario
+   */
+  getAppointmentState(to) {
+    return this.appointmentState[to] || null;
   }
 }
 
