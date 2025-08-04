@@ -14,6 +14,21 @@ app.get("/", (req, res) => {
 Checkout README.md to start.</pre>`);
 });
 
-app.listen(config.PORT, () => {
-  console.log(`Server is listening on port:  ${config.PORT}`);
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection:", reason);
+});
+
+setInterval(() => {
+  console.log("Bot is alive...");
+}, 15000); // cada 15 segundos
+
+console.log("Env config:", config);
+console.log("Webhook route initialized");
+
+app.listen(PORT, () => {
+  console.log(`Server is listening on port:  ${PORT}`);
 });
