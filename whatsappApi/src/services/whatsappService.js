@@ -1,21 +1,32 @@
 // Importa la librería 'axios' para realizar solicitudes HTTP.
-// Es la herramienta principal para comunicarse con la API de WhatsApp.
 import axios from "axios";
-
-// Importa la configuración del entorno desde un archivo 'env.js'.
-// Este archivo debería contener variables sensibles y de configuración
 import config from "../config/env.js";
 
-// Define la clase WhatsAppService.
-// Esta clase encapsula toda la lógica para enviar diferentes tipos de mensajes
-// y gestionar interacciones con la API de WhatsApp Business.
 class WhatsAppService {
+  constructor() {
+    // ✅ Validar configuración al inicializar
+    this.validateConfig();
+  }
+
   /**
-   * Envía un mensaje de texto simple a un destinatario de WhatsApp.
-   * @param {string} to - El número de teléfono del destinatario, incluyendo el código de país (ej. "584121234567").
-   * @param {string} body - El contenido del mensaje de texto a enviar.
-   * @param {string} [messageId] - Opcional. El ID del mensaje original si este mensaje es una respuesta.
-   * Esto ayuda a WhatsApp a mantener el contexto de la conversación.
+   * ✅ Validar que todas las variables necesarias estén configuradas
+   */
+  validateConfig() {
+    const requiredVars = ["ACCESS_TOKEN", "PHONE_NUMBER_ID", "API_VERSION"];
+    const missing = requiredVars.filter((varName) => !config[varName]);
+
+    if (missing.length > 0) {
+      console.error(
+        `❌ WhatsApp Service: Missing required config: ${missing.join(", ")}`
+      );
+      throw new Error(`Missing WhatsApp configuration: ${missing.join(", ")}`);
+    }
+
+    console.log("✅ WhatsApp Service initialized with valid config");
+  }
+
+  /**
+   * ✅ CORREGIDO: Usar config.ACCESS_TOKEN en lugar de config.API_TOKEN
    */
   async sendMessage(to, body, messageId) {
     try {
@@ -25,41 +36,42 @@ class WhatsAppService {
         text: { body },
       };
 
-      // Solo agregar contexto si messageId existe
       if (messageId) {
         requestData.context = { message_id: messageId };
       }
 
-      // Realiza una solicitud POST a la API de WhatsApp.
-      await axios({
+      const response = await axios({
         method: "POST",
-        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
+        url: `${config.BASE_URL}/${config.PHONE_NUMBER_ID}/messages`, // ✅ Usar PHONE_NUMBER_ID
         headers: {
-          Authorization: `Bearer ${config.API_TOKEN}`,
+          Authorization: `Bearer ${config.ACCESS_TOKEN}`, // ✅ CORREGIDO
+          "Content-Type": "application/json",
         },
         data: requestData,
       });
+
+      console.log(`✅ Message sent to ${to}`);
+      return response.data;
     } catch (error) {
       console.error(
-        "Error sending message:",
+        "❌ Error sending message:",
         error.response?.data || error.message
       );
+      throw error; // Re-lanzar para manejo en niveles superiores
     }
   }
 
   /**
-   * Marca un mensaje específico como "leído" en el chat de WhatsApp.
-   * Esto actualiza el estado del mensaje para el remitente en WhatsApp.
-   * @param {string} messageId - El ID del mensaje que se desea marcar como leído.
+   * ✅ CORREGIDO: Usar configuración correcta
    */
   async markAsRead(messageId) {
     try {
-      // Realiza una solicitud POST para actualizar el estado de un mensaje.
       await axios({
         method: "POST",
-        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
+        url: `${config.BASE_URL}/${config.PHONE_NUMBER_ID}/messages`, // ✅ CORREGIDO
         headers: {
-          Authorization: `Bearer ${config.API_TOKEN}`,
+          Authorization: `Bearer ${config.ACCESS_TOKEN}`, // ✅ CORREGIDO
+          "Content-Type": "application/json",
         },
         data: {
           messaging_product: "whatsapp",
@@ -67,20 +79,19 @@ class WhatsAppService {
           message_id: messageId,
         },
       });
+
+      console.log(`✅ Message ${messageId} marked as read`);
     } catch (error) {
       console.error(
-        "Error marking message as read:",
+        "❌ Error marking message as read:",
         error.response?.data || error.message
       );
+      // No lanzar error aquí, es una función auxiliar
     }
   }
 
   /**
-   * Envía un mensaje interactivo con botones de respuesta rápida a un destinatario.
-   * @param {string} to - El número de teléfono del destinatario.
-   * @param {string} BodyText - El texto principal que se muestra encima de los botones.
-   * @param {Array<Object>} buttons - Un array de objetos que definen los botones a mostrar.
-   * @param {string} [messageId] - Opcional. El ID del mensaje original para contexto.
+   * ✅ CORREGIDO: Usar configuración correcta
    */
   async sendInteractiveButtons(to, BodyText, buttons, messageId) {
     try {
@@ -95,33 +106,33 @@ class WhatsAppService {
         },
       };
 
-      // Solo agregar contexto si messageId existe
       if (messageId) {
         requestData.context = { message_id: messageId };
       }
 
-      await axios({
+      const response = await axios({
         method: "POST",
-        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
-        headers: { Authorization: `Bearer ${config.API_TOKEN}` },
+        url: `${config.BASE_URL}/${config.PHONE_NUMBER_ID}/messages`, // ✅ CORREGIDO
+        headers: {
+          Authorization: `Bearer ${config.ACCESS_TOKEN}`, // ✅ CORREGIDO
+          "Content-Type": "application/json",
+        },
         data: requestData,
       });
+
+      console.log(`✅ Interactive buttons sent to ${to}`);
+      return response.data;
     } catch (error) {
       console.error(
-        "Error sending interactive buttons:",
+        "❌ Error sending interactive buttons:",
         error.response?.data || error.message
       );
+      throw error;
     }
   }
 
   /**
-   * Envía un mensaje multimedia (imagen, video, audio, documento) a un destinatario.
-   * @param {string} to - El número de teléfono del destinatario.
-   * @param {'image'|'video'|'audio'|'document'} type - El tipo de medio a enviar.
-   * @param {string} mediaUrl - La URL pública accesible del archivo multimedia.
-   * @param {string} [caption] - Opcional. Un texto de leyenda para la imagen, video o documento.
-   * @returns {Promise<void>} No retorna un valor específico, maneja el envío.
-   * @throws {Error} Si el tipo de medio no es soportado o si ocurre un error en la API.
+   * ✅ CORREGIDO: Usar configuración correcta
    */
   async sendMediaMessage(to, type, mediaUrl, caption) {
     try {
@@ -129,10 +140,12 @@ class WhatsAppService {
 
       switch (type) {
         case "image":
-          mediaObject.image = { link: mediaUrl, caption };
+          mediaObject.image = { link: mediaUrl };
+          if (caption) mediaObject.image.caption = caption;
           break;
         case "video":
-          mediaObject.video = { link: mediaUrl, caption };
+          mediaObject.video = { link: mediaUrl };
+          if (caption) mediaObject.video.caption = caption;
           break;
         case "audio":
           mediaObject.audio = { link: mediaUrl };
@@ -140,19 +153,18 @@ class WhatsAppService {
         case "document":
           mediaObject.document = {
             link: mediaUrl,
-            caption,
-            filename: "document.pdf",
+            filename: caption || "document.pdf", // ✅ Mejor manejo del filename
           };
           break;
         default:
-          throw new Error("Unsupported media type");
+          throw new Error(`Unsupported media type: ${type}`);
       }
 
-      await axios({
+      const response = await axios({
         method: "POST",
-        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
+        url: `${config.BASE_URL}/${config.PHONE_NUMBER_ID}/messages`, // ✅ CORREGIDO
         headers: {
-          Authorization: `Bearer ${config.API_TOKEN}`,
+          Authorization: `Bearer ${config.ACCESS_TOKEN}`, // ✅ CORREGIDO
           "Content-Type": "application/json",
         },
         data: {
@@ -162,9 +174,12 @@ class WhatsAppService {
           ...mediaObject,
         },
       });
+
+      console.log(`✅ Media message (${type}) sent to ${to}`);
+      return response.data;
     } catch (error) {
       console.error(
-        "Error sending media message:",
+        "❌ Error sending media message:",
         error.response?.data || error.message
       );
       throw error;
@@ -172,30 +187,26 @@ class WhatsAppService {
   }
 
   /**
-   * ✅ CORREGIDO: Envía la ubicación usando coordenadas
-   * @param {string} to - Número de teléfono del destinatario
-   * @param {Object} locationData - Datos de ubicación personalizados (opcional)
+   * ✅ CORREGIDO: Usar configuración correcta
    */
   async sendLocation(to, locationData = null) {
     try {
-      // Datos por defecto de ubicación (puedes personalizar estos valores)
       const defaultLocation = {
-        latitude: 10.4925, // Latitud de Maracaibo, Venezuela
-        longitude: -66.9036, // Longitud de Maracaibo, Venezuela
+        latitude: 10.4925,
+        longitude: -66.9036,
         name: "ZoroathaProject - Clínica",
         address: "Av. Principal, Maracaibo, Zulia, Venezuela",
       };
 
-      // Usar ubicación personalizada o la por defecto
       const location = locationData || defaultLocation;
 
       console.log(`📍 Enviando ubicación a ${to}:`, location);
 
-      await axios({
+      const response = await axios({
         method: "POST",
-        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
+        url: `${config.BASE_URL}/${config.PHONE_NUMBER_ID}/messages`, // ✅ CORREGIDO
         headers: {
-          Authorization: `Bearer ${config.API_TOKEN}`,
+          Authorization: `Bearer ${config.ACCESS_TOKEN}`, // ✅ CORREGIDO
           "Content-Type": "application/json",
         },
         data: {
@@ -212,23 +223,21 @@ class WhatsAppService {
       });
 
       console.log(`✅ Ubicación enviada exitosamente a ${to}`);
+      return response.data;
     } catch (error) {
       console.error(
         "❌ Error sending location:",
         error.response?.data || error.message
       );
-      throw error; // Re-lanzar el error para manejo en el MessageHandler
+      throw error;
     }
   }
 
   /**
-   * ✅ NUEVO MÉTODO: Envía información de contacto
-   * @param {string} to - Número de teléfono del destinatario
-   * @param {Object} contactData - Datos del contacto (opcional)
+   * ✅ CORREGIDO: Usar configuración correcta
    */
   async sendContact(to, contactData = null) {
     try {
-      // Datos por defecto del contacto
       const defaultContact = {
         name: {
           formatted_name: "ZoroathaProject - Emergencias",
@@ -250,36 +259,60 @@ class WhatsAppService {
         ],
       };
 
-      // Usar contacto personalizado o el por defecto
       const contact = contactData || defaultContact;
 
       console.log(`📞 Enviando contacto a ${to}`);
 
-      await axios({
+      const response = await axios({
         method: "POST",
-        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
+        url: `${config.BASE_URL}/${config.PHONE_NUMBER_ID}/messages`, // ✅ CORREGIDO
         headers: {
-          Authorization: `Bearer ${config.API_TOKEN}`,
+          Authorization: `Bearer ${config.ACCESS_TOKEN}`, // ✅ CORREGIDO
           "Content-Type": "application/json",
         },
         data: {
           messaging_product: "whatsapp",
           to,
           type: "contacts",
-          contacts: [contact], // WhatsApp espera un array de contactos
+          contacts: [contact],
         },
       });
 
       console.log(`✅ Contacto enviado exitosamente a ${to}`);
+      return response.data;
     } catch (error) {
       console.error(
         "❌ Error sending contact:",
         error.response?.data || error.message
       );
-      throw error; // Re-lanzar el error para manejo en el MessageHandler
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ NUEVO: Método para verificar el estado del servicio
+   */
+  async healthCheck() {
+    try {
+      // Intentar hacer una llamada simple a la API para verificar conectividad
+      const response = await axios({
+        method: "GET",
+        url: `${config.BASE_URL}/${config.PHONE_NUMBER_ID}`,
+        headers: {
+          Authorization: `Bearer ${config.ACCESS_TOKEN}`,
+        },
+      });
+
+      console.log("✅ WhatsApp API health check passed");
+      return { status: "healthy", data: response.data };
+    } catch (error) {
+      console.error(
+        "❌ WhatsApp API health check failed:",
+        error.response?.data || error.message
+      );
+      return { status: "unhealthy", error: error.message };
     }
   }
 }
 
-// Exporta una única instancia de la clase WhatsAppService.
 export default new WhatsAppService();
