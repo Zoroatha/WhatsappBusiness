@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import config from "./config/env.js";
+import config from "../config/env.js";
 
 class GoogleCalendarService {
   constructor() {
@@ -141,7 +141,7 @@ class GoogleCalendarService {
   }
 
   /**
-   * ✅ Crear evento en Google Calendar
+   * ✅ CORREGIDO: Crear evento en Google Calendar SIN attendees
    */
   async createEvent(appointmentData) {
     if (!this.isAvailable()) {
@@ -186,12 +186,13 @@ class GoogleCalendarService {
           dateTime: endDateTime.toISOString(),
           timeZone: "America/Caracas",
         },
-        attendees: [
-          {
-            email: config.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-            displayName: appointmentData.name,
-          },
-        ],
+        // ❌ REMOVIDO: attendees (causa el error de permisos)
+        // attendees: [
+        //   {
+        //     email: config.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        //     displayName: appointmentData.name,
+        //   },
+        // ],
         reminders: {
           useDefault: false,
           overrides: [
@@ -199,12 +200,24 @@ class GoogleCalendarService {
             { method: "popup", minutes: 60 }, // 1 hora antes
           ],
         },
+        // ✅ AGREGADO: Incluir información del paciente en el evento
+        extendedProperties: {
+          private: {
+            patientName: appointmentData.name,
+            consultationType: appointmentData.consulta,
+            amount: appointmentData.monto,
+            provider: appointmentData.proveedor,
+            rif: appointmentData.rif,
+            paymentMethod: appointmentData.pago,
+          },
+        },
       };
 
       const response = await this.calendar.events.insert({
         calendarId: this.calendarId,
         resource: event,
-        sendUpdates: "all",
+        // ❌ REMOVIDO: sendUpdates (no necesario sin attendees)
+        // sendUpdates: "all",
       });
 
       const eventId = response.data.id;
@@ -226,6 +239,10 @@ class GoogleCalendarService {
         throw new Error("Calendar access denied - check permissions");
       } else if (error.code === 404) {
         throw new Error("Calendar not found - check calendar ID");
+      } else if (error.message.includes("attendees")) {
+        throw new Error(
+          "Service account cannot invite attendees without Domain-Wide Delegation"
+        );
       } else {
         throw new Error(`Calendar error: ${error.message}`);
       }
@@ -354,6 +371,48 @@ class GoogleCalendarService {
       );
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * ✅ NUEVO: Crear evento simple para testing
+   */
+  async createSimpleEvent(title, dateTime, description = "") {
+    if (!this.isAvailable()) {
+      throw new Error("Google Calendar service not available");
+    }
+
+    try {
+      const endDateTime = new Date(dateTime);
+      endDateTime.setHours(endDateTime.getHours() + 1);
+
+      const event = {
+        summary: title,
+        description: description,
+        start: {
+          dateTime: dateTime.toISOString(),
+          timeZone: "America/Caracas",
+        },
+        end: {
+          dateTime: endDateTime.toISOString(),
+          timeZone: "America/Caracas",
+        },
+      };
+
+      const response = await this.calendar.events.insert({
+        calendarId: this.calendarId,
+        resource: event,
+      });
+
+      console.log("✅ Simple calendar event created:", response.data.id);
+      return {
+        success: true,
+        eventId: response.data.id,
+        eventLink: response.data.htmlLink,
+      };
+    } catch (error) {
+      console.error("❌ Error creating simple event:", error.message);
+      throw error;
     }
   }
 }
