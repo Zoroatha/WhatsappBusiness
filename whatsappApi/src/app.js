@@ -1,5 +1,5 @@
 import express from "express";
-import config from "../config/env.js";
+import config from "./config/env.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 
 const app = express();
