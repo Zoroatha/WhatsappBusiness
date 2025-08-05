@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import config from "../config/env.js";
+import config from "../config/env.js"; // ✅ CORREGIDO: Desde services/ hacia config/
 
 class GoogleCalendarService {
   constructor() {
@@ -141,7 +141,7 @@ class GoogleCalendarService {
   }
 
   /**
-   * ✅ CORREGIDO: Crear evento en Google Calendar SIN attendees
+   * ✅ CORREGIDO: Crear evento en Google Calendar SIN attendees para evitar errores de permisos
    */
   async createEvent(appointmentData) {
     if (!this.isAvailable()) {
@@ -186,21 +186,14 @@ class GoogleCalendarService {
           dateTime: endDateTime.toISOString(),
           timeZone: "America/Caracas",
         },
-        // ❌ REMOVIDO: attendees (causa el error de permisos)
-        // attendees: [
-        //   {
-        //     email: config.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        //     displayName: appointmentData.name,
-        //   },
-        // ],
+        // ❌ REMOVIDO: attendees para evitar error de Domain-Wide Delegation
         reminders: {
           useDefault: false,
           overrides: [
-            { method: "email", minutes: 24 * 60 }, // 24 horas antes
             { method: "popup", minutes: 60 }, // 1 hora antes
           ],
         },
-        // ✅ AGREGADO: Incluir información del paciente en el evento
+        // ✅ Información adicional en propiedades extendidas
         extendedProperties: {
           private: {
             patientName: appointmentData.name,
@@ -216,8 +209,6 @@ class GoogleCalendarService {
       const response = await this.calendar.events.insert({
         calendarId: this.calendarId,
         resource: event,
-        // ❌ REMOVIDO: sendUpdates (no necesario sin attendees)
-        // sendUpdates: "all",
       });
 
       const eventId = response.data.id;
@@ -234,12 +225,15 @@ class GoogleCalendarService {
     } catch (error) {
       console.error("❌ Error creating calendar event:", error.message);
 
-      // Diferentes tipos de error
+      // Diferentes tipos de error con mensajes más específicos
       if (error.code === 403) {
         throw new Error("Calendar access denied - check permissions");
       } else if (error.code === 404) {
         throw new Error("Calendar not found - check calendar ID");
-      } else if (error.message.includes("attendees")) {
+      } else if (
+        error.message.includes("attendees") ||
+        error.message.includes("Domain-Wide Delegation")
+      ) {
         throw new Error(
           "Service account cannot invite attendees without Domain-Wide Delegation"
         );
@@ -371,48 +365,6 @@ class GoogleCalendarService {
       );
     } catch {
       return false;
-    }
-  }
-
-  /**
-   * ✅ NUEVO: Crear evento simple para testing
-   */
-  async createSimpleEvent(title, dateTime, description = "") {
-    if (!this.isAvailable()) {
-      throw new Error("Google Calendar service not available");
-    }
-
-    try {
-      const endDateTime = new Date(dateTime);
-      endDateTime.setHours(endDateTime.getHours() + 1);
-
-      const event = {
-        summary: title,
-        description: description,
-        start: {
-          dateTime: dateTime.toISOString(),
-          timeZone: "America/Caracas",
-        },
-        end: {
-          dateTime: endDateTime.toISOString(),
-          timeZone: "America/Caracas",
-        },
-      };
-
-      const response = await this.calendar.events.insert({
-        calendarId: this.calendarId,
-        resource: event,
-      });
-
-      console.log("✅ Simple calendar event created:", response.data.id);
-      return {
-        success: true,
-        eventId: response.data.id,
-        eventLink: response.data.htmlLink,
-      };
-    } catch (error) {
-      console.error("❌ Error creating simple event:", error.message);
-      throw error;
     }
   }
 }
