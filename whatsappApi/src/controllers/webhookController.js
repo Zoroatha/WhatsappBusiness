@@ -1,206 +1,102 @@
-import config from "../config/env.js";
-import messageHandler from "../services/messageHandler.js";
+// controllers/webhookController.js
+import googleCalendarService from "../services/googleCalendarService.js";
+import appendToSheet from "../services/googleSheetsService.js";
 
-class WebhookController {
-  async handleIncoming(req, res) {
-    // CRÍTICO: Responder inmediatamente a WhatsApp para evitar timeouts
-    res.status(200).send("EVENT_RECEIVED");
+/**
+ * ✅ Controlador para verificar el webhook (GET)
+ */
+const verifyWebhook = (req, res) => {
+  const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "mi_token_de_verificacion";
 
-    try {
-      console.log("📨 Webhook received:", new Date().toISOString());
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
 
-      // Log más compacto para evitar spam en logs
-      if (process.env.NODE_ENV === "development") {
-        console.log("Webhook body:", JSON.stringify(req.body, null, 2));
-      }
-
-      // Verificar estructura básica del webhook
-      const entry = req.body?.entry?.[0];
-      if (!entry) {
-        console.log("⚠️  No entry found in webhook");
-        return;
-      }
-
-      const change = entry.changes?.[0];
-      if (!change) {
-        console.log("⚠️  No changes found in webhook");
-        return;
-      }
-
-      const value = change.value;
-      if (!value) {
-        console.log("⚠️  No value found in webhook");
-        return;
-      }
-
-      // Verificar si es un mensaje o actualización de estado
-      const message = value.messages?.[0];
-      const senderInfo = value.contacts?.[0];
-      const statuses = value.statuses;
-
-      if (message) {
-        console.log(`📩 Processing message from: ${message.from}`);
-        console.log(`📝 Message type: ${message.type}`);
-
-        // Procesar mensaje de forma asíncrona para no bloquear la respuesta
-        process.nextTick(async () => {
-          try {
-            await messageHandler.handleIncomingMessage(message, senderInfo);
-          } catch (error) {
-            console.error("❌ Error processing message:", error.message);
-            console.error("📋 Stack trace:", error.stack);
-
-            // Intentar enviar mensaje de error al usuario si es posible
-            try {
-              if (message?.from) {
-                await messageHandler.whatsappService.sendMessage(
-                  message.from,
-                  "❌ Lo siento, ocurrió un error procesando tu mensaje. Por favor intenta de nuevo escribiendo 'hola'."
-                );
-              }
-            } catch (sendError) {
-              console.error(
-                "❌ Failed to send error message to user:",
-                sendError.message
-              );
-            }
-          }
-        });
-      } else if (statuses) {
-        // Manejar actualizaciones de estado de mensajes
-        console.log(
-          "📊 Received message status update:",
-          statuses.length,
-          "status(es)"
-        );
-
-        if (process.env.NODE_ENV === "development") {
-          statuses.forEach((status) => {
-            console.log(`📍 Status: ${status.status} for message ${status.id}`);
-          });
-        }
-      } else {
-        console.log("ℹ️  Webhook received with no messages or statuses");
-
-        if (process.env.NODE_ENV === "development") {
-          console.log("📋 Webhook structure:", {
-            hasEntry: !!entry,
-            hasChanges: !!change,
-            hasValue: !!value,
-            hasMessages: !!value.messages,
-            hasStatuses: !!value.statuses,
-            hasContacts: !!value.contacts,
-          });
-        }
-      }
-    } catch (error) {
-      console.error("💥 Critical error in handleIncoming:", error.message);
-      console.error("📋 Error stack:", error.stack);
-
-      // Log información del request para debugging
-      console.error("📋 Request info:", {
-        method: req.method,
-        url: req.url,
-        headers: req.headers,
-        bodyExists: !!req.body,
-        bodyType: typeof req.body,
-      });
-    }
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("✅ Webhook verificado correctamente");
+    res.status(200).send(challenge);
+  } else {
+    console.warn("❌ Verificación fallida del webhook");
+    res.sendStatus(403);
   }
+};
 
-  verifyWebhook(req, res) {
-    try {
-      const mode = req.query["hub.mode"];
-      const token = req.query["hub.verify_token"];
-      const challenge = req.query["hub.challenge"];
+/**
+ * ✅ Controlador para recibir mensajes del webhook (POST)
+ */
+const handleIncoming = async (req, res) => {
+  try {
+    const body = req.body;
 
-      console.log("🔐 Webhook verification attempt:", {
-        mode: mode || "MISSING",
-        tokenProvided: !!token,
-        challengeProvided: !!challenge,
-        expectedTokenConfigured: !!config.WEBHOOK_VERIFY_TOKEN,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Verificar que todos los parámetros estén presentes
-      if (!mode || !token || !challenge) {
-        console.error("❌ Webhook verification failed: Missing parameters");
-        return res.status(400).json({
-          error: "Missing required parameters",
-          required: ["hub.mode", "hub.verify_token", "hub.challenge"],
-          provided: {
-            mode: !!mode,
-            token: !!token,
-            challenge: !!challenge,
-          },
-        });
-      }
-
-      // Verificar que tengamos el token configurado
-      if (!config.WEBHOOK_VERIFY_TOKEN) {
-        console.error(
-          "❌ Webhook verification failed: WEBHOOK_VERIFY_TOKEN not configured"
-        );
-        return res.status(500).json({
-          error: "Webhook verify token not configured on server",
-        });
-      }
-
-      // Verificar modo y token
-      if (mode === "subscribe" && token === config.WEBHOOK_VERIFY_TOKEN) {
-        console.log("✅ Webhook verified successfully!");
-        console.log(`🔗 Challenge response: ${challenge}`);
-        res.status(200).send(challenge);
-      } else {
-        console.error("❌ Webhook verification failed:", {
-          modeMatch: mode === "subscribe",
-          tokenMatch: token === config.WEBHOOK_VERIFY_TOKEN,
-          receivedMode: mode,
-          // No loggear el token completo por seguridad
-          tokenMatches: token === config.WEBHOOK_VERIFY_TOKEN,
-        });
-
-        res.status(403).json({
-          error: "Forbidden",
-          message: "Webhook verification failed",
-        });
-      }
-    } catch (error) {
-      console.error("💥 Error in verifyWebhook:", error.message);
-      console.error("📋 Stack trace:", error.stack);
-
-      res.status(500).json({
-        error: "Internal server error during webhook verification",
-        timestamp: new Date().toISOString(),
-      });
+    // 🛡️ Asegurarse que el body tiene estructura válida (Meta)
+    if (!body.object || body.object !== "whatsapp_business_account") {
+      console.warn("⚠️ Webhook recibido, pero no es de WhatsApp");
+      return res.sendStatus(404);
     }
-  }
 
-  // Método adicional para health check específico del webhook
-  async healthCheck(req, res) {
-    try {
-      const health = {
-        status: "healthy",
-        service: "Webhook Controller",
-        timestamp: new Date().toISOString(),
-        config: {
-          hasWebhookToken: !!config.WEBHOOK_VERIFY_TOKEN,
-          hasAccessToken: !!config.ACCESS_TOKEN,
-          hasPhoneNumberId: !!config.PHONE_NUMBER_ID,
-        },
-        uptime: process.uptime(),
-      };
+    // 🧠 Simular extracción de datos desde el mensaje recibido (esto lo adaptas tú)
+    const appointmentData = {
+      name: "César Díaz",
+      date: "05/08/2025",
+      time: "10:30 am",
+      consulta: "Consulta general",
+      monto: "25",
+      proveedor: "Farmacia Zoroatha",
+      rif: "J-12345678-9",
+      pago: "Transferencia",
+    };
 
-      res.status(200).json(health);
-    } catch (error) {
-      console.error("❌ Health check error:", error.message);
-      res.status(500).json({
-        status: "unhealthy",
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      });
+    console.log("📥 Datos recibidos:", appointmentData);
+
+    // ✅ Validar formato de fecha y hora
+    if (
+      !googleCalendarService.isValidDateTimeFormat(
+        appointmentData.date,
+        appointmentData.time
+      )
+    ) {
+      return res
+        .status(400)
+        .json({ error: "❌ Formato de fecha/hora inválido" });
     }
-  }
-}
 
-export default new WebhookController();
+    // ✅ Crear evento en Google Calendar
+    const calendarResult = await googleCalendarService.createEvent(
+      appointmentData
+    );
+    console.log("✅ Evento creado en Calendar:", calendarResult.eventId);
+
+    // ✅ Crear fila para Google Sheets
+    const row = [
+      appointmentData.name,
+      appointmentData.date,
+      appointmentData.time,
+      new Date().toLocaleString("es-VE", { timeZone: "America/Caracas" }),
+      appointmentData.consulta,
+      appointmentData.monto,
+      appointmentData.proveedor,
+      appointmentData.rif,
+      appointmentData.pago,
+      calendarResult.eventId,
+    ];
+
+    const sheetsResult = await appendToSheet(row);
+    console.log("✅ Datos agregados a Sheets:", sheetsResult);
+
+    res.status(200).json({
+      success: true,
+      calendarEventId: calendarResult.eventId,
+      calendarLink: calendarResult.eventLink,
+      sheetsStatus: sheetsResult,
+    });
+  } catch (error) {
+    console.error("❌ Error al procesar la cita:", error.message);
+    res.status(500).json({ error: "Error interno al procesar la cita" });
+  }
+};
+
+export default {
+  verifyWebhook,
+  handleIncoming,
+};
+// controllers/webhookController.js
