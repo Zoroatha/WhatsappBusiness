@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import config from "../config/env.js";
+import config from "./config/env.js";
 
 class GoogleCalendarService {
   constructor() {
