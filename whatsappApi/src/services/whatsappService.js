@@ -1,6 +1,6 @@
 // Importa la librería 'axios' para realizar solicitudes HTTP.
 import axios from "axios";
-import config from "./config/env.js";
+import config from "../config/env.js";
 
 class WhatsAppService {
   constructor() {
