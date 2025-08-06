@@ -9,7 +9,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // Usar las rutas del webhook
-app.use("/", webhookRoutes);
+app.use("/webhook", webhookRoutes);
 
 // Ruta de salud/estado
 app.get("/", (req, res) => {

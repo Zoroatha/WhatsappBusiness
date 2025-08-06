@@ -1,7 +1,7 @@
 {
   "name": "medpet",
   "version": "1.0.0",
-  "main": "src/app.js",
+  "main": "../whatsappApi/src/app.js",
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js"
