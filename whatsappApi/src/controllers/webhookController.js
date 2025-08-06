@@ -1,23 +1,28 @@
 // controllers/webhookController.js
-import googleCalendarService from "../services/googleCalendarService.js";
-import appendToSheet from "../services/googleSheetsService.js";
+import messageHandler from "../services/messageHandler.js";
+import config from "../config/env.js";
 
 /**
  * ✅ Controlador para verificar el webhook (GET)
  */
 const verifyWebhook = (req, res) => {
-  const VERIFY_TOKEN =
-    process.env.WEBHOOK_VERIFY_TOKEN || "mi_token_de_verificacion";
+  const VERIFY_TOKEN = config.WEBHOOK_VERIFY_TOKEN;
 
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
+  console.log("🔍 Webhook verification attempt:", {
+    mode,
+    token: token ? "***" : "missing",
+    challenge: !!challenge,
+  });
+
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("✅ Webhook verificado correctamente");
+    console.log("✅ Webhook verified successfully");
     res.status(200).send(challenge);
   } else {
-    console.warn("❌ Verificación fallida del webhook");
+    console.warn("❌ Webhook verification failed");
     res.sendStatus(403);
   }
 };
@@ -28,71 +33,73 @@ const verifyWebhook = (req, res) => {
 const handleIncoming = async (req, res) => {
   try {
     const body = req.body;
+    console.log("📥 Incoming webhook data:", JSON.stringify(body, null, 2));
 
-    // 🛡️ Asegurarse que el body tiene estructura válida (Meta)
-    if (!body.object || body.object !== "whatsapp_business_account") {
-      console.warn("⚠️ Webhook recibido, pero no es de WhatsApp");
-      return res.sendStatus(404);
+    // Verificar que es un webhook de WhatsApp Business
+    if (body?.object !== "whatsapp_business_account") {
+      console.warn("⚠️ Non-WhatsApp webhook received");
+      return res.sendStatus(200); // Return 200 to avoid retries
     }
 
-    // 🧠 Simular extracción de datos desde el mensaje recibido (esto lo adaptas tú)
-    const appointmentData = {
-      name: "César Díaz",
-      date: "05/08/2025",
-      time: "10:30 am",
-      consulta: "Consulta general",
-      monto: "25",
-      proveedor: "Farmacia Zoroatha",
-      rif: "J-12345678-9",
-      pago: "Transferencia",
-    };
+    // Procesar entradas de WhatsApp
+    if (body.entry && body.entry.length > 0) {
+      for (const entry of body.entry) {
+        // Verificar si hay cambios en los mensajes
+        if (entry.changes) {
+          for (const change of entry.changes) {
+            if (change.field === "messages") {
+              const value = change.value;
 
-    console.log("📥 Datos recibidos:", appointmentData);
+              // Procesar mensajes entrantes
+              if (value.messages && value.messages.length > 0) {
+                for (const message of value.messages) {
+                  console.log("📨 Processing message:", {
+                    id: message.id,
+                    from: message.from,
+                    type: message.type,
+                    timestamp: message.timestamp,
+                  });
 
-    // ✅ Validar formato de fecha y hora
-    if (
-      !googleCalendarService.isValidDateTimeFormat(
-        appointmentData.date,
-        appointmentData.time
-      )
-    ) {
-      return res
-        .status(400)
-        .json({ error: "❌ Formato de fecha/hora inválido" });
+                  // Obtener información del remitente
+                  const senderInfo = value.contacts?.find(
+                    (contact) => contact.wa_id === message.from
+                  );
+
+                  // Procesar el mensaje con el handler
+                  await messageHandler.handleIncomingMessage(
+                    message,
+                    senderInfo
+                  );
+                }
+              }
+
+              // Procesar cambios de estado de mensajes (opcional)
+              if (value.statuses && value.statuses.length > 0) {
+                for (const status of value.statuses) {
+                  console.log("📊 Message status update:", {
+                    id: status.id,
+                    status: status.status,
+                    timestamp: status.timestamp,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
-    // ✅ Crear evento en Google Calendar
-    const calendarResult = await googleCalendarService.createEvent(
-      appointmentData
-    );
-    console.log("✅ Evento creado en Calendar:", calendarResult.eventId);
-
-    // ✅ Crear fila para Google Sheets
-    const row = [
-      appointmentData.name,
-      appointmentData.date,
-      appointmentData.time,
-      new Date().toLocaleString("es-VE", { timeZone: "America/Caracas" }),
-      appointmentData.consulta,
-      appointmentData.monto,
-      appointmentData.proveedor,
-      appointmentData.rif,
-      appointmentData.pago,
-      calendarResult.eventId,
-    ];
-
-    const sheetsResult = await appendToSheet(row);
-    console.log("✅ Datos agregados a Sheets:", sheetsResult);
-
-    res.status(200).json({
-      success: true,
-      calendarEventId: calendarResult.eventId,
-      calendarLink: calendarResult.eventLink,
-      sheetsStatus: sheetsResult,
-    });
+    // Siempre responder 200 para evitar reintentos
+    res.status(200).json({ success: true });
   } catch (error) {
-    console.error("❌ Error al procesar la cita:", error.message);
-    res.status(500).json({ error: "Error interno al procesar la cita" });
+    console.error("❌ Error processing webhook:", error);
+    console.error("📋 Stack trace:", error.stack);
+
+    // Responder 200 incluso en errores para evitar reintentos de WhatsApp
+    res.status(200).json({
+      success: false,
+      error: "Internal processing error",
+    });
   }
 };
 
@@ -100,4 +107,3 @@ export default {
   verifyWebhook,
   handleIncoming,
 };
-// controllers/webhookController.js
