@@ -6,7 +6,7 @@ import appendToSheet from "../services/googleSheetsService.js";
  * ✅ Controlador para verificar el webhook (GET)
  */
 const verifyWebhook = (req, res) => {
-  const WEBHOOK_VERIFY_TOKEN =
+  const VERIFY_TOKEN =
     process.env.WEBHOOK_VERIFY_TOKEN || "mi_token_de_verificacion";
 
   const mode = req.query["hub.mode"];
