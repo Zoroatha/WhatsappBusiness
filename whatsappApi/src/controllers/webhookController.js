@@ -21,11 +21,11 @@ const verifyWebhook = (req, res) => {
   console.log("🔍 Verification details:");
   console.log("- Mode:", mode);
   console.log("- Token from Meta:", token);
-  console.log("- Token from ENV:", WEBHOOK_VERIFY_TOKEN);
-  console.log("- Tokens match:", token === WEBHOOK_VERIFY_TOKEN);
+  console.log("- Token from ENV:", VERIFY_TOKEN);
+  console.log("- Tokens match:", token === VERIFY_TOKEN);
   console.log("- Challenge:", challenge);
 
-  if (mode === "subscribe" && token === WEBHOOK_VERIFY_TOKEN) {
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
     console.log("✅ Webhook verified successfully");
     res.status(200).send(challenge);
   } else {
