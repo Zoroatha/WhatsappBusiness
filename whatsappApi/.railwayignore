@@ -1,0 +1,8 @@
+Dockerfile*
+docker*
+.dockerignore
+node_modules
+.git
+.env
+.env.local
+*.log

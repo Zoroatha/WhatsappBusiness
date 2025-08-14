@@ -1,8 +1,14 @@
 [providers]
 node = "18"
 
-[build]
-cmds = ["npm ci --production"]
+[variables]
+NODE_ENV = "production"
 
-[start]
+[phases.setup]
+nixPkgs = ["nodejs-18_x", "npm-9_x"]
+
+[phases.build]
+cmds = ["npm ci"]
+
+[phases.start]
 cmd = "node src/app.js"
