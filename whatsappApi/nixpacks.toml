@@ -1,13 +1,10 @@
 [providers]
-node = "18"
+node = "18.19.0"
 
 [variables]
 NODE_ENV = "production"
 
-[phases.setup]
-nixPkgs = ["nodejs-18_x", "npm-9_x"]
-
-[phases.build]
+[phases.install]
 cmds = ["npm ci"]
 
 [phases.start]
