@@ -1,9 +1,9 @@
-// controllers/webhookController.js - VERSION CON DEBUG
+// controllers/webhookController.js - VERSION CORREGIDA Y TOLERANTE
 import messageHandler from "../services/messageHandler.js";
 import config from "../config/env.js";
 
 /**
- * ✅ Controlador para verificar el webhook (GET) - CON DEBUG DETALLADO
+ * ✅ Controlador para verificar el webhook (GET)
  */
 const verifyWebhook = (req, res) => {
   console.log("🔍 WEBHOOK VERIFICATION DEBUG:");
@@ -25,17 +25,28 @@ const verifyWebhook = (req, res) => {
   console.log("- Tokens match:", token === VERIFY_TOKEN);
   console.log("- Challenge:", challenge);
 
+  // Si faltan parámetros, devolver error claro
+  if (!mode || !token || !challenge) {
+    console.warn("⚠️ Missing required query params for verification");
+    return res.status(400).json({
+      error: "Missing required query parameters",
+      expected: ["hub.mode", "hub.verify_token", "hub.challenge"],
+      received: req.query,
+    });
+  }
+
+  // Verificar webhook
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     console.log("✅ Webhook verified successfully");
-    res.status(200).send(challenge);
+    return res.status(200).send(challenge);
   } else {
     console.warn("❌ Webhook verification failed");
     console.warn("❌ Reason:", {
       modeCorrect: mode === "subscribe",
-      tokenMatch: token === WEBHOOK_VERIFY_TOKEN,
+      tokenMatch: token === VERIFY_TOKEN,
       hasChallenge: !!challenge,
     });
-    res.sendStatus(403);
+    return res.sendStatus(403);
   }
 };
 
@@ -73,6 +84,7 @@ const handleIncoming = async (req, res) => {
                   const senderInfo = value.contacts?.find(
                     (contact) => contact.wa_id === message.from
                   );
+
                   await messageHandler.handleIncomingMessage(
                     message,
                     senderInfo
