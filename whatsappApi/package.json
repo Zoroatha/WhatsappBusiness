@@ -1,5 +1,5 @@
 {
-  "name": "medpet-whatsapp-bot",
+  "name": "medpet",
   "version": "1.0.0",
   "type": "module",
   "main": "src/app.js",
